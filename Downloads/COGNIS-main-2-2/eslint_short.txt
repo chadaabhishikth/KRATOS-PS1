@@ -1,0 +1,5 @@
+﻿
+C:\Users\USER\OneDrive\Desktop\A\COGNIS\src\app\api\assessments\[id]\questions\route.ts
+61:54  warning  '_ca' is defined but never used  @typescript-eslint/no-unused-vars
+61:76  warning  '_eo' is defined but never used  @typescript-eslint/no-unused-vars
+Γ£û 2 problems (0 errors, 2 warnings)
