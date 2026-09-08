@@ -1,0 +1,24 @@
+{
+  "name": "kratos-ps1",
+  "version": "1.0.0",
+  "private": true,
+  "description": "KRATOS-PS1 — Intelligent Conveyor Belt Health Monitoring & Predictive Maintenance (SIH 2026). MQTT→Socket.IO bridge, Ghost synthetic feed, demo dashboard, ESP32 firmware.",
+  "scripts": {
+    "broker": "mosquitto -c broker/mosquitto.conf",
+    "broker:js": "node broker/aedes.js",
+    "engine": "node engine/server.js",
+    "ghost": "node ghost/ghost.js",
+    "panic": "node ghost/ghost.js",
+    "tap": "node ghost/ghost.js --spike",
+    "test:features": "node scripts/test-features.js",
+    "verify": "node scripts/verify.js"
+  },
+  "dependencies": {
+    "mqtt": "^5.10.1",
+    "socket.io": "^4.7.5",
+    "socket.io-client": "^4.8.3"
+  },
+  "devDependencies": {
+    "aedes": "^1.1.2"
+  }
+}
