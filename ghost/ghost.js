@@ -20,6 +20,9 @@
  *    GHOST_VISION_ACTIVE (default 5000 ms — anomaly duration)
  * ─────────────────────────────────────────────────────────────────────────────
  */
+import { createRequire } from 'module';
+const require = createRequire(import.meta.url);
+
 const mqtt = require('mqtt');
 
 const BROKER = process.env.MQTT_URL || 'mqtt://127.0.0.1:1883';

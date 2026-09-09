@@ -7,6 +7,9 @@
  *   node scripts/verify.js
  *   ENGINE_URL=http://192.168.1.42:3000 node scripts/verify.js   (LAN test)
  */
+import { createRequire } from 'module';
+const require = createRequire(import.meta.url);
+
 const { io } = require('socket.io-client');
 
 const N = 3;
@@ -32,7 +35,8 @@ sock.on('telemetry', (p) => {
   console.log(
     `[verify] packet ${count}: src=${p.source} ts=${p.timestamp} zone=${p.digital_twin?.fault_zone} rul=${p.rul_days}d ` +
     `vib=${t.vibration_g}g curr=${t.current_amps}A temp=${t.temperature_c}C dist=${t.distance_mm}mm ` +
-    `flux=${t.magnetic_flux_ut}µT rpm=${t.speed_rpm} anomaly=${p.vision_cam?.anomaly_detected}(${p.vision_cam?.issue_type})`
+    `flux=${t.magnetic_flux_ut}µT rpm=${t.speed_rpm} anomaly=${p.vision_cam?.anomaly_detected}(${p.vision_cam?.issue_type}) ` +
+    `ai=${JSON.stringify(p.ai)}`
   );
   if (count >= N) {
     clearTimeout(timer);

@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef } from "react";
+import { io } from "socket.io-client";
 import {
   Home as HomeIcon,
   Video,
@@ -281,39 +282,67 @@ export default function App() {
     return "Green";
   };
 
-  // 5-SECOND TELEMETRY ENGINE: Evaluates every 5 seconds, logs ONLY on COLOR STATUS CHANGES!
+  // LIVE TELEMETRY STREAM: Connects to Node.js / MQTT / AI Gateway via Socket.IO
   useEffect(() => {
-    if (!isLiveSimulating || isEmergencyStopped) return;
+    const socket = io("http://localhost:3000", {
+      reconnectionAttempts: 10,
+      reconnectionDelay: 2000,
+    });
 
-    const interval = setInterval(() => {
-      const updatedMap = { ...zoneTelemetryMap };
-      const newLogEntries: TelemetryLog[] = [];
+    socket.on("connect", () => {
+      console.log("[App] Connected to KRATOS Telemetry Engine");
+    });
 
-      currentManager.assignedZones.forEach((zone) => {
-        const limits = zoneThresholds[zone] || { tempThreshold: 75, vibThreshold: 3.0 };
-        const currentStatus = updatedMap[zone]?.status || "Green";
+    socket.on("telemetry", (packet: any) => {
+      if (!isLiveSimulating || isEmergencyStopped) return;
 
-        // Generate present telemetry values every 5 seconds
-        const rawTemp = Math.floor(
-          42 + Math.random() * (currentStatus === "Red" ? 50 : currentStatus === "Yellow" ? 32 : 12)
-        );
-        const rawVib = parseFloat(
-          (1.8 + Math.random() * (currentStatus === "Red" ? 6 : currentStatus === "Yellow" ? 2.5 : 0.8)).toFixed(1)
-        );
-        const rawCurrent = Math.floor(48 + Math.random() * 20);
+      const fz = packet.digital_twin?.fault_zone;
+      const zone = fz ? (typeof fz === "number" ? `Zone ${fz}` : String(fz)) : affectedZone;
 
-        const calculatedStatus = evaluateStatus(rawTemp, rawVib, limits.tempThreshold, limits.vibThreshold);
-        const calculatedHealth = Math.max(
-          15,
-          Math.min(99, 100 - Math.round((rawTemp / limits.tempThreshold) * 30 + (rawVib / limits.vibThreshold) * 20))
-        );
+      const tele = packet.telemetry || {};
+      const rawVib = typeof tele.vibration_g === "number" ? tele.vibration_g : 1.5;
+      const rawTemp = typeof tele.temperature_c === "number" ? tele.temperature_c : 45;
+      const rawCurrent = typeof tele.current_amps === "number" ? tele.current_amps : 50;
 
-        const rulPercent = Math.max(10, Math.min(99, Math.round(calculatedHealth * 0.95)));
-        const rulDays = Math.round(rulPercent * 1.1);
+      const limits = zoneThresholds[zone] || { tempThreshold: 75, vibThreshold: 3.0 };
 
-        // ALWAYS update PRESENT VALUES for this zone (no log created for normal 5s tick!)
-        updatedMap[zone] = {
-          ...updatedMap[zone],
+      // AI Decision with Defensible Heuristic Fallback
+      let calculatedStatus: "Green" | "Blue" | "Yellow" | "Red" = "Green";
+      if (packet.ai && packet.ai.ai_available && packet.ai.status && packet.ai.status !== "UNKNOWN") {
+        const s = String(packet.ai.status).toUpperCase();
+        if (s === "RED") calculatedStatus = "Red";
+        else if (s === "YELLOW") calculatedStatus = "Yellow";
+        else calculatedStatus = "Green";
+      } else {
+        calculatedStatus = evaluateStatus(rawTemp, rawVib, limits.tempThreshold, limits.vibThreshold);
+      }
+
+      const rulDays = typeof packet.ai?.rul_days === "number"
+        ? Math.round(packet.ai.rul_days)
+        : (typeof packet.rul_days === "number" ? Math.round(packet.rul_days) : 42);
+
+      const rulPercent = Math.min(99, Math.max(10, Math.round((rulDays / 60) * 100)));
+
+      const calculatedHealth = typeof packet.ai?.confidence === "number"
+        ? Math.min(99, Math.max(15, Math.round(packet.ai.confidence)))
+        : Math.max(15, Math.min(99, 100 - Math.round((rawTemp / limits.tempThreshold) * 30 + (rawVib / limits.vibThreshold) * 20)));
+
+      setZoneTelemetryMap((prev) => {
+        const prevStatus = prevZoneStatusRef.current[zone];
+        const colorChanged = prevStatus !== undefined && calculatedStatus !== prevStatus;
+
+        const updatedZone: ZoneTelemetry = {
+          ...(prev[zone] || {
+            temp: rawTemp,
+            vib: rawVib,
+            current: rawCurrent,
+            status: calculatedStatus,
+            health: calculatedHealth,
+            rulDays,
+            rulPercent,
+            lastTransitionTime: "",
+            lastTransitionEvent: "",
+          }),
           temp: rawTemp,
           vib: rawVib,
           current: rawCurrent,
@@ -322,14 +351,6 @@ export default function App() {
           rulDays,
           rulPercent,
         };
-
-        if (zone === affectedZone && calculatedStatus === "Red" && !showCriticalModal) {
-          setShowCriticalModal(true);
-        }
-
-        // LOG ONLY IF VALUE COLOR STATUS ACTUALLY CHANGED!
-        const prevStatus = prevZoneStatusRef.current[zone];
-        const colorChanged = prevStatus !== undefined && calculatedStatus !== prevStatus;
 
         if (colorChanged) {
           const istTimestamp = new Date().toLocaleTimeString("en-IN", {
@@ -340,37 +361,47 @@ export default function App() {
             hour12: true,
           }) + " IST";
 
-          const transitionText = `${prevStatus} → ${calculatedStatus.toUpperCase()}`;
+          const transitionText = `${prevStatus} → ${calculatedStatus.toUpperCase()}${
+            packet.ai?.confidence ? ` (${packet.ai.confidence}% conf)` : ""
+          }`;
           const isPinned = calculatedStatus === "Red" || calculatedStatus === "Yellow";
 
-          newLogEntries.push({
-            id: `EVT-${Math.floor(1000 + Math.random() * 9000)}`,
-            timestamp: istTimestamp,
-            zone,
-            status: calculatedStatus,
-            vibration: `${rawVib} mm/s`,
-            temperature: `${rawTemp} °C`,
-            healthIndex: calculatedHealth,
-            isPinned,
-            attended: false,
-            transitionText,
-          });
-
-          updatedMap[zone].lastTransitionTime = istTimestamp;
-          updatedMap[zone].lastTransitionEvent = transitionText;
+          updatedZone.lastTransitionTime = istTimestamp;
+          updatedZone.lastTransitionEvent = transitionText;
           prevZoneStatusRef.current[zone] = calculatedStatus;
+
+          setHistoryLogs((prevLogs) => [
+            {
+              id: `EVT-${Math.floor(1000 + Math.random() * 9000)}`,
+              timestamp: istTimestamp,
+              zone,
+              status: calculatedStatus,
+              vibration: `${rawVib} mm/s`,
+              temperature: `${rawTemp} °C`,
+              healthIndex: calculatedHealth,
+              isPinned,
+              attended: false,
+              transitionText,
+            },
+            ...prevLogs.slice(0, 49),
+          ]);
+
+          if (zone === affectedZone && calculatedStatus === "Red" && !showCriticalModal) {
+            setShowCriticalModal(true);
+          }
         }
+
+        return {
+          ...prev,
+          [zone]: updatedZone,
+        };
       });
+    });
 
-      setZoneTelemetryMap(updatedMap);
-
-      if (newLogEntries.length > 0) {
-        setHistoryLogs((prev) => [...newLogEntries, ...prev.slice(0, 10)]);
-      }
-    }, 5000); // EXACT 5-SECOND EVALUATION INTERVAL
-
-    return () => clearInterval(interval);
-  }, [isLiveSimulating, currentManager, affectedZone, zoneThresholds, showCriticalModal, isEmergencyStopped]);
+    return () => {
+      socket.disconnect();
+    };
+  }, [isLiveSimulating, isEmergencyStopped, affectedZone, zoneThresholds, showCriticalModal]);
 
   // Derive parameters for active affectedZone
   const activeZoneTelemetry = zoneTelemetryMap[affectedZone] || {

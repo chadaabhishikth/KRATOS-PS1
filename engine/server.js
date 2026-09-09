@@ -30,9 +30,15 @@
  *  Env overrides: PORT (3000) · MQTT_URL (mqtt://127.0.0.1:1883) · TOPICS ("kratos/ps1/#")
  * ─────────────────────────────────────────────────────────────────────────────
  */
+import { createRequire } from 'module';
+import { fileURLToPath } from 'url';
+import path from 'path';
+const require = createRequire(import.meta.url);
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+
 const http = require('http');
 const fs = require('fs');
-const path = require('path');
 const mqtt = require('mqtt');
 const { Server } = require('socket.io');
 
@@ -168,7 +174,41 @@ client.on('reconnect', () => {
   io.emit('broker', { state: 'offline' });
 });
 client.on('error', (err) => console.error('[engine] mqtt error:', err.message));
-client.on('message', (topic, payload) => {
+const AI_URL = process.env.AI_URL || 'http://127.0.0.1:8000/predict';
+
+async function getAIPrediction(telemetry) {
+  // 1-second timeout to prevent API bottlenecking the MQTT stream
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), 1000);
+
+  try {
+    const response = await fetch(AI_URL, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        vibration_g: typeof telemetry.vibration_g === 'number' ? telemetry.vibration_g : 0,
+        current_amps: typeof telemetry.current_amps === 'number' ? telemetry.current_amps : 0,
+        temperature_c: typeof telemetry.temperature_c === 'number' ? telemetry.temperature_c : 25
+      }),
+      signal: controller.signal
+    });
+
+    clearTimeout(timeoutId);
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+
+    return await response.json();
+  } catch (error) {
+    clearTimeout(timeoutId);
+    return {
+      status: 'UNKNOWN',
+      confidence: 0,
+      rul_days: null,
+      ai_available: false
+    };
+  }
+}
+
+client.on('message', async (topic, payload) => {
   let data;
   try {
     data = JSON.parse(payload.toString('utf8'));
@@ -182,6 +222,15 @@ client.on('message', (topic, payload) => {
   if (!data.telemetry && !data.vision_cam) {
     console.log(`[engine] status: ${topic} ${payload.toString('utf8')}`);
     return;
+  }
+
+  // Enrich with AI prediction
+  if (data.telemetry) {
+    const ai = await getAIPrediction(data.telemetry);
+    data.ai = ai;
+    if (typeof ai.rul_days === 'number') {
+      data.rul_days = ai.rul_days;
+    }
   }
 
   evaluate(data);   // alerts first so alerts_history can lead telemetry
