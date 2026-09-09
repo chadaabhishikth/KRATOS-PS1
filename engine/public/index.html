@@ -1,0 +1,327 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>KRATOS-PS1 · Conveyor Health Dashboard</title>
+<!--
+  ─────────────────────────────────────────────────────────────────────────
+  KRATOS-PS1 REFERENCE DASHBOARD v2 — mirrors the 6-page React architecture:
+    Home (telemetry + digital twin zone + RUL) · Live Feed (vision) ·
+    Alerts · Settings. Binds to the exact Socket.IO events the React app uses:
+
+      const socket = io('http://<LAPTOP_IP>:3000');
+      socket.on('snapshot',       ({ last, history, alerts, settings }) => {});
+      socket.on('telemetry',      (pkt) => { pkt.telemetry.vibration_g ... });
+      socket.on('alerts_history', (alertsArray) => {});   // full array, live
+      socket.on('settings_updated', (settings) => {});
+      socket.emit('update_settings', { max_vib: 3.0, max_temp: 60 });
+
+  The 3 UI fixes from the design review are baked in (marked FIX 1/2/3).
+  ─────────────────────────────────────────────────────────────────────────
+-->
+<style>
+  :root {
+    --bg: #0a1020; --card: #111a2e; --line: #1e2a45; --ink: #e6edf7;
+    --dim: #8b9bb8; --green: #22c55e; --amber: #f59e0b; --red: #ef4444; --cyan: #38bdf8;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { background: var(--bg); color: var(--ink); font: 15px/1.45 "Segoe UI", system-ui, sans-serif; padding: 20px; }
+  header { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; margin-bottom: 16px; }
+  .brand { font-size: 22px; font-weight: 700; letter-spacing: .5px; }
+  .brand small { display: block; font-size: 12px; font-weight: 400; color: var(--dim); }
+  .chip { border: 1px solid var(--line); background: var(--card); border-radius: 999px; padding: 5px 12px; font-size: 12.5px; color: var(--dim); }
+  .chip b { color: var(--ink); font-weight: 600; }
+  .badge { border-radius: 999px; padding: 5px 12px; font-size: 12.5px; font-weight: 700; letter-spacing: .6px; }
+  .badge.ghost { background: rgba(245,158,11,.15); color: var(--amber); border: 1px solid rgba(245,158,11,.5); }
+  .badge.esp   { background: rgba(34,197,94,.15);  color: var(--green); border: 1px solid rgba(34,197,94,.5); }
+  .badge.stale { background: rgba(239,68,68,.15);  color: var(--red);   border: 1px solid rgba(239,68,68,.5); }
+  .zone-strip { display: inline-flex; gap: 3px; margin-left: 8px; vertical-align: middle; }
+  .zone-strip i { width: 16px; height: 10px; border-radius: 3px; background: #1c2942; display: inline-block; }
+  .zone-strip i.on { background: var(--cyan); box-shadow: 0 0 8px rgba(56,189,248,.7); }
+  .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 12px; }
+  .card { background: var(--card); border: 1px solid var(--line); border-radius: 14px; padding: 14px 16px; }
+  .card .label { font-size: 11px; letter-spacing: 1.1px; color: var(--dim); text-transform: uppercase; margin-bottom: 7px; }
+  .card .value { font-size: 30px; font-weight: 700; font-variant-numeric: tabular-nums; }
+  .card .unit { font-size: 14px; color: var(--dim); font-weight: 400; margin-left: 4px; }
+  .card .sub { font-size: 12px; color: var(--dim); margin-top: 5px; }
+  .card.wide { grid-column: 1 / -1; }
+  #vibCard.alert { border-color: var(--red); animation: pulse 1s infinite; }
+  #visionCard.anomaly { border-color: var(--red); box-shadow: 0 0 0 2px rgba(239,68,68,.35); animation: pulse 1s infinite; }
+  @keyframes pulse { 50% { box-shadow: 0 0 0 6px rgba(239,68,68,.12); } }
+  .pill { font-size: 12px; font-weight: 700; padding: 4px 10px; border-radius: 999px; }
+  .pill.ok { background: rgba(34,197,94,.18); color: var(--green); }
+  .pill.warn { background: rgba(245,158,11,.18); color: var(--amber); }
+  .pill.crit { background: rgba(239,68,68,.18); color: var(--red); }
+  .pill.info { background: rgba(56,189,248,.15); color: var(--cyan); }
+  .panel { margin-top: 14px; }
+  .panel h3 { font-size: 12px; letter-spacing: 1.2px; text-transform: uppercase; color: var(--dim); margin-bottom: 10px; }
+  table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  th { text-align: left; color: var(--dim); font-weight: 600; font-size: 11px; letter-spacing: 1px; text-transform: uppercase; padding: 6px 8px; border-bottom: 1px solid var(--line); }
+  td { padding: 6px 8px; border-bottom: 1px solid #16213a; font-variant-numeric: tabular-nums; }
+  .sev { font-weight: 700; font-size: 11px; letter-spacing: .5px; }
+  .sev.warning { color: var(--amber); } .sev.critical { color: var(--red); }
+  .settings-row { display: flex; flex-wrap: wrap; gap: 14px; align-items: flex-end; }
+  .field label { display: block; font-size: 11px; color: var(--dim); text-transform: uppercase; letter-spacing: 1px; margin-bottom: 5px; }
+  .field input { width: 110px; background: #0c1426; color: var(--ink); border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px; font-size: 14px; }
+  button { background: var(--cyan); border: 0; color: #04121f; font-weight: 700; border-radius: 8px; padding: 9px 16px; font-size: 13px; cursor: pointer; }
+  button.ghostbtn { background: transparent; color: var(--dim); border: 1px solid var(--line); }
+  .sent { color: var(--green); font-size: 12px; margin-left: 10px; opacity: 0; transition: opacity .3s; }
+  .sent.show { opacity: 1; }
+  canvas { width: 100%; height: 70px; display: block; }
+  footer { margin-top: 14px; font-size: 12px; color: var(--dim); display: flex; gap: 18px; flex-wrap: wrap; }
+</style>
+</head>
+<body>
+<header>
+  <div class="brand">KRATOS-PS1
+    <small>Intelligent Conveyor Belt Health Monitoring &amp; Predictive Maintenance — SIH 2026</small>
+  </div>
+  <span class="chip" id="dateChip">SIH 2026 · 08 Sep 2026</span>
+  <span class="chip">Digital twin zone <b id="zoneNum">--</b>/6
+    <span class="zone-strip" id="zoneStrip"><i></i><i></i><i></i><i></i><i></i><i></i></span>
+  </span>
+  <span class="badge stale" id="srcBadge">STALE</span>
+</header>
+
+<!-- HOME · 7-parameter telemetry -->
+<div class="grid">
+  <div class="card" id="vibCard">
+    <div class="label">Vibration (ADXL345)</div>
+    <div class="value"><span id="vib">--</span><span class="unit">g</span></div>
+    <div class="sub">limit <span id="vibLimit">--</span> g</div>
+  </div>
+  <div class="card">
+    <div class="label">Current (ACS712)</div>
+    <div class="value"><span id="curr">--</span><span class="unit">A</span></div>
+    <div class="sub">limit <span id="currLimit">--</span> A</div>
+  </div>
+  <!-- FIX 1: temperature gauge shows °C (the "45% Load" label bug) -->
+  <div class="card">
+    <div class="label">Temperature (DS18B20)</div>
+    <div class="value"><span id="temp">--</span><span class="unit">°C</span></div>
+    <div class="sub">limit <span id="tempLimit">--</span> °C</div>
+  </div>
+  <div class="card">
+    <div class="label">Distance (VL53L0X)</div>
+    <div class="value"><span id="dist">--</span><span class="unit">mm</span></div>
+    <div class="sub">belt surface clearance</div>
+  </div>
+  <div class="card">
+    <div class="label">Mag. Flux (SS49E)</div>
+    <div class="value"><span id="flux">--</span><span class="unit">µT</span></div>
+    <div class="sub">drive motor field</div>
+  </div>
+  <div class="card">
+    <div class="label">Speed (A3144)</div>
+    <div class="value"><span id="rpm">--</span><span class="unit">rpm</span></div>
+    <div class="sub">pulley encoder</div>
+  </div>
+  <!-- FIX 2: RUL thresholds — 42 days ⇒ GREEN, never red -->
+  <div class="card">
+    <div class="label">RUL (AI/ML model)</div>
+    <div class="value" id="rulValue" style="color:var(--green)"><span id="rul">--</span><span class="unit">days</span></div>
+    <div class="sub" id="rulSub">≥30 d green · 14–29 d amber · &lt;14 d red</div>
+  </div>
+</div>
+
+<div class="grid" style="margin-top:14px">
+  <!-- LIVE FEED · vision AI -->
+  <div class="card" id="visionCard" style="flex:2">
+    <div class="label">Vision AI · YOLOv8 (simulated)</div>
+    <div class="value" style="font-size:20px" id="visionState"><span class="pill ok">NO ANOMALY</span></div>
+    <div class="sub" id="visionSub">issue: None · confidence 0.00</div>
+  </div>
+  <div class="card" style="flex:3">
+    <div class="label">Vibration trend — last 60 packets (g)</div>
+    <canvas id="spark" height="70"></canvas>
+  </div>
+</div>
+
+<!-- ALERTS · live from alerts_history -->
+<div class="card panel">
+  <h3>Alerts history <span id="alertCount" class="pill info">0</span></h3>
+  <table>
+    <thead><tr><th>#</th><th>Time</th><th>Type</th><th>Zone</th><th>Message</th><th>Severity</th></tr></thead>
+    <tbody id="alertRows"><tr><td colspan="6" style="color:var(--dim)">no alerts yet</td></tr></tbody>
+  </table>
+</div>
+
+<!-- SETTINGS · update_settings -->
+<div class="card panel">
+  <h3>Threshold configuration <span id="settingsEcho" class="sub" style="text-transform:none;letter-spacing:0"></span></h3>
+  <div class="settings-row">
+    <div class="field"><label>Max vibration (g)</label><input id="inVib" type="number" step="0.1" min="0.1"></div>
+    <div class="field"><label>Max temperature (°C)</label><input id="inTemp" type="number" step="1" min="1"></div>
+    <div class="field"><label>Max current (A)</label><input id="inCurr" type="number" step="0.5" min="0.5"></div>
+    <button id="pushSettings">Push update_settings</button>
+    <button class="ghostbtn" id="resetSettings">Defaults</button>
+    <span class="sent" id="settingsSent">✓ sent to engine</span>
+  </div>
+</div>
+
+<footer>
+  <span id="feedInfo">feed: —</span>
+  <span id="lastPkt">last packet: —</span>
+  <span id="pktCount">packets: 0</span>
+  <span id="brokerState">broker: —</span>
+</footer>
+
+<script src="/socket.io/socket.io.js"></script>
+<script>
+  // FIX 3: demo date hardcoded to 2026 (independent of wall clock)
+  const DEMO_DATE = 'SIH 2026 · 08 Sep 2026';
+  document.getElementById('dateChip').textContent = DEMO_DATE;
+
+  const DEFAULTS = { max_vib: 2.0, max_temp: 60, max_current: 15 };
+  const state = { settings: { ...DEFAULTS }, alerts: [], history: [] };
+  const $ = (id) => document.getElementById(id);
+  const socket = io();
+
+  // FIX 2 (shared rule): 42 days must be green
+  function rulColor(days) {
+    if (days >= 30) return '#22c55e';
+    if (days >= 14) return '#f59e0b';
+    return '#ef4444';
+  }
+
+  function render(pkt) {
+    if (!pkt || pkt.parseError) return;
+    const tele = pkt.telemetry || {};
+    const vision = pkt.vision_cam || {};
+
+    $('vib').textContent  = tele.vibration_g   != null ? tele.vibration_g.toFixed(2) : '--';
+    $('curr').textContent = tele.current_amps  != null ? tele.current_amps.toFixed(1) : '--';
+    $('temp').textContent = tele.temperature_c != null ? tele.temperature_c.toFixed(1) : '--';
+    $('dist').textContent = tele.distance_mm   != null ? tele.distance_mm.toFixed(0) : '--';
+    $('flux').textContent = tele.magnetic_flux_ut != null ? tele.magnetic_flux_ut.toFixed(0) : '--';
+    $('rpm').textContent  = tele.speed_rpm     != null ? tele.speed_rpm.toFixed(0) : '--';
+
+    // vibration over dynamic limit → red flash
+    $('vibCard').classList.toggle('alert',
+      tele.vibration_g != null && tele.vibration_g > state.settings.max_vib);
+
+    const rul = pkt.rul_days ?? 0;
+    $('rul').textContent = rul;
+    $('rulValue').style.color = rulColor(rul);
+
+    // digital twin zone 1-6
+    const zone = pkt.digital_twin?.fault_zone ?? 0;
+    $('zoneNum').textContent = zone || '--';
+    [...$('zoneStrip').children].forEach((seg, i) => seg.classList.toggle('on', i + 1 === zone));
+
+    // vision
+    if (vision.anomaly_detected) {
+      $('visionState').innerHTML = `<span class="pill crit">⚠ ${ (vision.issue_type || 'ANOMALY').toUpperCase() } · ${(vision.confidence*100).toFixed(0)}%</span>`;
+      $('visionSub').textContent = `bounding box triggered on live feed · confidence ${vision.confidence}`;
+    } else {
+      $('visionState').innerHTML = '<span class="pill ok">NO ANOMALY</span>';
+      $('visionSub').textContent = 'issue: None · confidence 0.00';
+    }
+    $('visionCard').classList.toggle('anomaly', !!vision.anomaly_detected);
+
+    if (tele.vibration_g != null) {
+      state.history.push(tele.vibration_g);
+      if (state.history.length > 60) state.history.shift();
+      drawSpark();
+    }
+
+    const src = pkt.source || 'unknown';
+    const badge = $('srcBadge');
+    badge.textContent = src === 'ghost' ? 'GHOST FEED' : src === 'esp32' ? 'ESP32 LIVE' : 'UNKNOWN SRC';
+    badge.className = 'badge ' + (src === 'ghost' ? 'ghost' : src === 'esp32' ? 'esp' : 'stale');
+
+    lastSeen = Date.now();
+    packets++;
+    $('feedInfo').textContent = `feed: ${src} · ts ${pkt.timestamp || '—'}`;
+    $('lastPkt').textContent = 'last packet: ' + new Date(pkt._recvTs).toLocaleTimeString();
+    $('pktCount').textContent = 'packets: ' + packets;
+  }
+
+  function renderAlerts(arr) {
+    state.alerts = arr;
+    $('alertCount').textContent = String(arr.length);
+    const rows = arr.slice(-12).reverse().map(a =>
+      `<tr><td>${a.id}</td><td>${new Date(a.ts).toLocaleTimeString()}</td><td>${a.type}</td>` +
+      `<td>${a.zone ?? '—'}</td><td>${a.message}</td>` +
+      `<td><span class="sev ${a.severity}">${a.severity.toUpperCase()}</span></td></tr>`
+    ).join('');
+    $('alertRows').innerHTML = rows || '<tr><td colspan="6" style="color:var(--dim)">no alerts yet</td></tr>';
+  }
+
+  function renderSettings(st) {
+    state.settings = st;
+    $('inVib').value  = st.max_vib;
+    $('inTemp').value = st.max_temp;
+    $('inCurr').value = st.max_current;
+    $('vibLimit').textContent  = st.max_vib;
+    $('tempLimit').textContent = st.max_temp;
+    $('currLimit').textContent = st.max_current;
+    $('settingsEcho').textContent = `applied: max_vib=${st.max_vib} g · max_temp=${st.max_temp} °C · max_current=${st.max_current} A`;
+  }
+
+  function drawSpark() {
+    const c = $('spark');
+    const dpr = window.devicePixelRatio || 1;
+    const w = c.clientWidth, h = 70;
+    if (c.width !== w * dpr) { c.width = w * dpr; c.height = h * dpr; }
+    const ctx = c.getContext('2d');
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    ctx.clearRect(0, 0, w, h);
+    const max = 15;
+    ctx.strokeStyle = '#38bdf8';
+    ctx.lineWidth = 1.6;
+    ctx.beginPath();
+    state.history.forEach((v, i) => {
+      const x = (i / 59) * w;
+      const y = h - Math.min(v, max) / max * (h - 6) - 3;
+      i === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y);
+    });
+    ctx.stroke();
+  }
+
+  // ── settings page → engine ────────────────────────────────────────────────
+  function pushSettings() {
+    const payload = {
+      max_vib: parseFloat($('inVib').value),
+      max_temp: parseFloat($('inTemp').value),
+      max_current: parseFloat($('inCurr').value)
+    };
+    if (Object.values(payload).some(v => !Number.isFinite(v) || v <= 0)) return;
+    socket.emit('update_settings', payload);
+    $('settingsSent').classList.add('show');
+    setTimeout(() => $('settingsSent').classList.remove('show'), 1500);
+  }
+  $('pushSettings').addEventListener('click', pushSettings);
+  $('resetSettings').addEventListener('click', () => {
+    socket.emit('update_settings', { ...DEFAULTS });
+  });
+
+  // ── socket wiring (identical to the React app's bindings) ─────────────────
+  let lastSeen = 0, packets = 0;
+  socket.on('snapshot', (s) => {
+    if (s.settings) renderSettings(s.settings);
+    if (Array.isArray(s.alerts)) renderAlerts(s.alerts);
+    if (s.history?.length) {
+      state.history = s.history.map(p => p.telemetry?.vibration_g).filter(v => v != null).slice(-60);
+      drawSpark();
+      packets = s.history.length;
+    }
+    if (s.last) render(s.last);
+    $('brokerState').textContent = 'broker: ' + s.broker;
+  });
+  socket.on('telemetry', render);
+  socket.on('alerts_history', renderAlerts);
+  socket.on('settings_updated', renderSettings);
+  socket.on('broker', ({ state: st }) => { $('brokerState').textContent = 'broker: ' + st; });
+
+  // stale detection: no packet for > 4 s
+  setInterval(() => {
+    if (lastSeen && Date.now() - lastSeen > 4000) {
+      const b = $('srcBadge');
+      b.textContent = 'STALE'; b.className = 'badge stale';
+    }
+  }, 1000);
+</script>
+</body>
+</html>
