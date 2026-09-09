@@ -1,24 +1,41 @@
 {
-  "name": "kratos-ps1",
-  "version": "1.0.0",
+  "name": "sih-ps1",
   "private": true,
-  "description": "KRATOS-PS1 — Intelligent Conveyor Belt Health Monitoring & Predictive Maintenance (SIH 2026). MQTT→Socket.IO bridge, Ghost synthetic feed, demo dashboard, ESP32 firmware.",
+  "version": "0.0.0",
+  "type": "module",
   "scripts": {
-    "broker": "mosquitto -c broker/mosquitto.conf",
-    "broker:js": "node broker/aedes.js",
-    "engine": "node engine/server.js",
-    "ghost": "node ghost/ghost.js",
-    "panic": "node ghost/ghost.js",
-    "tap": "node ghost/ghost.js --spike",
-    "test:features": "node scripts/test-features.js",
-    "verify": "node scripts/verify.js"
+    "dev": "vite",
+    "build": "tsc -b && vite build",
+    "lint": "oxlint",
+    "preview": "vite preview"
   },
   "dependencies": {
-    "mqtt": "^5.10.1",
-    "socket.io": "^4.7.5",
-    "socket.io-client": "^4.8.3"
+    "@base-ui/react": "^1.8.0",
+    "@fontsource-variable/geist": "^5.3.0",
+    "@radix-ui/react-slot": "^1.3.3",
+    "@radix-ui/react-tabs": "^1.1.21",
+    "@tailwindcss/vite": "^4.3.3",
+    "class-variance-authority": "^0.7.1",
+    "clsx": "^2.1.1",
+    "cn": "^0.2.6",
+    "lucide-react": "^1.43.0",
+    "react": "^19.2.8",
+    "react-dom": "^19.2.8",
+    "recharts": "^3.10.1",
+    "shadcn": "^4.21.0",
+    "tailwind-merge": "^3.6.0",
+    "tw-animate-css": "^1.4.0"
   },
   "devDependencies": {
-    "aedes": "^1.1.2"
+    "@types/node": "^24.13.3",
+    "@types/react": "^19.2.18",
+    "@types/react-dom": "^19.2.4",
+    "@vitejs/plugin-react": "^6.1.0",
+    "autoprefixer": "^10.5.5",
+    "oxlint": "^1.79.0",
+    "postcss": "^8.5.28",
+    "tailwindcss": "^4.3.3",
+    "typescript": "~6.0.2",
+    "vite": "^8.2.2"
   }
 }
